@@ -111,6 +111,12 @@ da tela; esta é de fundo cheio, para escrever em cima.
   a cor ou a espessura aplica nela.
 - **Tinta do rótulo:** escolhida sozinha pela luminosidade da cor. Branco no
   magenta e no navy, grafite no laranja e no verde, que é onde branco não lê.
+- **O anel do callout é sempre branco**, de 3 px, como no protótipo que gerou os
+  prints do manual. É ele que solta o callout de um fundo escuro ou da própria cor.
+  Sobre fundo quase branco ele desaparece — isso é esperado.
+- **O círculo do callout cresce com o rótulo.** `1` fica em 17 px de raio, `12` vai a
+  21, `MM` a 28. A alça continua mandando: ela define o mínimo, e o círculo só passa
+  disso quando o texto não caberia.
 - **Resolução:** se o recorte for maior que a tela, o editor exibe reduzido, mas o
   arquivo salvo e o que vai para a área de transferência saem em **tamanho real**.
   As formas vivem em coordenadas de imagem, não de tela.
@@ -197,10 +203,15 @@ Quatro decisões que valem saber ao mexer:
   o fio principal consome.
 - **O desenho final é feito pelo Pillow**, não capturando o canvas. É o que garante
   que o arquivo saia em resolução cheia mesmo quando o editor exibe reduzido.
-- **A seta é desenhada por superamostragem 4×**, numa camada RGBA do tamanho dela, e
-  reduzida com LANCZOS. O `ImageDraw` não suaviza borda, e em diagonal a linha saía
-  em escada. Só a seta faz isso: o marcador e a etiqueta têm borda reta ou curva
-  grande, onde a escada não aparece.
+- **Toda forma é desenhada por superamostragem 4×**, cada uma numa camada RGBA do
+  tamanho dela, reduzida com LANCZOS. O `ImageDraw` não suaviza borda: círculo e
+  diagonal saem em escada, e o anel branco de 3 px do callout praticamente
+  desaparecia. A camada é do tamanho da forma, não da imagem, para não estourar
+  memória — uma camada 4× de um print inteiro passaria de 280 MB.
+- **O raio do callout acompanha o rótulo, e o tamanho da fonte vem do raio da alça.**
+  Se a fonte viesse do raio efetivo, crescer o círculo cresceria a letra, que
+  cresceria o círculo — realimentação sem fim. Assim a alça define o tamanho
+  desejado e o círculo só cresce além disso quando o rótulo não caberia.
 - **A caixa da etiqueta de texto é medida pelo maior entre a métrica do Pillow e a
   do tkinter.** O Pillow desenha o arquivo e o tkinter desenha o editor; medir só
   por um deles corta o texto no outro.

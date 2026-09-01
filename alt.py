@@ -76,6 +76,12 @@ ESPESSURAS = [2, 3, 5]
 RAIO_CALLOUT = 17
 RAIO_CANTO = 10
 
+# Do prototipo que gerou os prints do manual: contorno branco de 3 px e fonte
+# a 1,25 do raio. Com 2 px o anel quase desaparecia no papel.
+CONTORNO_CALLOUT = 3
+FONTE_SOBRE_RAIO = 1.25
+FOLGA_CALLOUT = 7
+
 # Etiqueta de texto: folga interna generosa, para o texto nunca encostar na
 # borda arredondada, e os tres tamanhos oferecidos na barra.
 FOLGA_TEXTO_X = 14
@@ -249,6 +255,31 @@ def fonte_negrito(tamanho):
     return ImageFont.load_default()
 
 
+def raio_do_callout(forma):
+    """Raio efetivo do callout: nunca menor do que o rotulo precisa.
+
+    O tamanho da fonte vem do raio **da alca**, nao do raio efetivo. Se viesse
+    do efetivo, crescer o circulo cresceria a letra, que cresceria o circulo de
+    novo — realimentacao sem fim.
+    """
+    base = float(forma.get('r', RAIO_CALLOUT))
+    rotulo = str(forma.get('rotulo', '') or '')
+    if not rotulo:
+        return base
+
+    fonte = fonte_negrito(max(8, int(base * FONTE_SOBRE_RAIO)))
+    pincel = ImageDraw.Draw(Image.new('RGB', (4, 4)))
+    try:
+        caixa = pincel.textbbox((0, 0), rotulo, font=fonte)
+        largura, altura = caixa[2] - caixa[0], caixa[3] - caixa[1]
+    except Exception:
+        largura, altura = len(rotulo) * base, base
+
+    # Circulo que comporta a caixa do texto: metade da diagonal, mais folga.
+    necessario = math.hypot(largura, altura) / 2 + FOLGA_CALLOUT
+    return max(base, necessario)
+
+
 def medir_texto_pil(texto, tamanho):
     """Tamanho da etiqueta pelas metricas do Pillow.
 
@@ -285,41 +316,130 @@ def medir_texto_pil(texto, tamanho):
 
 
 SUPERAMOSTRAGEM = 4
+TETO_DA_CAMADA = 120_000_000   # pixels da camada ampliada
 
 
-def desenhar_seta_suave(imagem, forma):
-    """Seta com antisserrilhamento, por superamostragem.
+def caixa_da_forma(forma):
+    """Retangulo que envolve a forma, com folga para contorno e suavizacao."""
+    tipo = forma['tipo']
+    esp = forma.get('esp', 3)
 
-    O ImageDraw nao suaviza borda: em diagonal a linha sai em escada. O jeito e
-    desenhar numa camada ampliada e reduzir com reamostragem boa.
+    if tipo == 'seta':
+        cabeca = cabeca_de_seta(forma['x1'], forma['y1'], forma['x2'], forma['y2'], esp)
+        xs = [forma['x1'], forma['x2']] + [c[0] for c in cabeca]
+        ys = [forma['y1'], forma['y2']] + [c[1] for c in cabeca]
+        folga = esp * 2 + 6
 
-    Feito so para a seta, de proposito. O marcador e a etiqueta tem borda quase
-    sempre reta ou curva grande, onde a escada nao aparece, e ampliar tudo
-    custaria memoria a troco de nada.
+    elif tipo == 'marcador':
+        xs = [forma['x1'], forma['x2']]
+        ys = [forma['y1'], forma['y2']]
+        folga = esp + 6
+
+    elif tipo == 'callout':
+        r = raio_do_callout(forma)
+        xs = [forma['x'] - r, forma['x'] + r]
+        ys = [forma['y'] - r, forma['y'] + r]
+        folga = CONTORNO_CALLOUT + 5
+
+    elif tipo == 'texto':
+        largura, altura, _ = medir_texto_pil(forma.get('texto', ''), forma.get('tamanho', 22))
+        largura = max(largura, forma.get('largura', 0))
+        altura = max(altura, forma.get('altura', 0))
+        xs = [forma['x'], forma['x'] + largura]
+        ys = [forma['y'], forma['y'] + altura]
+        folga = 4
+
+    else:
+        return None
+
+    return (int(math.floor(min(xs) - folga)), int(math.floor(min(ys) - folga)),
+            int(math.ceil(max(xs) + folga)), int(math.ceil(max(ys) + folga)))
+
+
+def pintar_forma(pincel, forma, levar, escala):
+    """Desenha uma forma em coordenadas de camada.
+
+    `levar` converte coordenada de imagem em coordenada de camada; `escala` e o
+    fator de ampliacao, para espessura e raio acompanharem.
     """
     cor = forma['cor']
-    esp = forma.get('esp', 3)
-    x1, y1 = forma['x1'], forma['y1']
-    x2, y2 = forma['x2'], forma['y2']
+    tipo = forma['tipo']
 
-    cabeca = cabeca_de_seta(x1, y1, x2, y2, esp)
-    recuo = max(16.0, esp * 5.2) * 0.78
-    ax1, ay1, ax2, ay2 = encurtar(x1, y1, x2, y2, recuo)
+    if tipo == 'marcador':
+        x1, y1 = levar(min(forma['x1'], forma['x2']), min(forma['y1'], forma['y2']))
+        x2, y2 = levar(max(forma['x1'], forma['x2']), max(forma['y1'], forma['y2']))
+        pincel.rounded_rectangle(
+            (x1, y1, x2, y2),
+            radius=forma.get('raio', RAIO_CANTO) * escala,
+            outline=cor, width=max(1, int(round(forma.get('esp', 3) * escala))))
 
-    # Caixa que envolve tudo, com folga para a espessura e para a suavizacao.
-    folga = esp * 2 + 6
-    xs = [ax1, ax2, x1, x2] + [c[0] for c in cabeca]
-    ys = [ay1, ay2, y1, y2] + [c[1] for c in cabeca]
-    x0 = int(math.floor(min(xs) - folga))
-    y0 = int(math.floor(min(ys) - folga))
-    x3 = int(math.ceil(max(xs) + folga))
-    y3 = int(math.ceil(max(ys) + folga))
+    elif tipo == 'seta':
+        esp = forma.get('esp', 3)
+        cabeca = cabeca_de_seta(forma['x1'], forma['y1'], forma['x2'], forma['y2'], esp)
+        recuo = max(16.0, esp * 5.2) * 0.78
+        ax1, ay1, ax2, ay2 = encurtar(forma['x1'], forma['y1'], forma['x2'], forma['y2'], recuo)
+        largura_da_linha = max(1, int(round(esp * escala)))
+        pincel.line((*levar(ax1, ay1), *levar(ax2, ay2)), fill=cor, width=largura_da_linha)
+        # Ponta arredondada no rabo, como o capstyle do editor.
+        raio = largura_da_linha / 2
+        tx, ty = levar(ax1, ay1)
+        pincel.ellipse((tx - raio, ty - raio, tx + raio, ty + raio), fill=cor)
+        pincel.polygon([levar(cx, cy) for cx, cy in cabeca], fill=cor)
 
-    largura, altura = x3 - x0, y3 - y0
+    elif tipo == 'callout':
+        r = raio_do_callout(forma) * escala
+        cx, cy = levar(forma['x'], forma['y'])
+        tinta = tinta_sobre(cor)
+        # O anel e sempre branco, como no prototipo: e ele que solta o callout
+        # de qualquer fundo. Com tinta escura o anel continua branco.
+        pincel.ellipse((cx - r, cy - r, cx + r, cy + r), fill=cor,
+                       outline=BRANCO,
+                       width=max(1, int(round(CONTORNO_CALLOUT * escala))))
+        rotulo = str(forma.get('rotulo', '') or '')
+        if rotulo:
+            base = float(forma.get('r', RAIO_CALLOUT))
+            fonte = fonte_negrito(max(8, int(base * FONTE_SOBRE_RAIO * escala)))
+            caixa = pincel.textbbox((0, 0), rotulo, font=fonte)
+            pincel.text((cx - (caixa[2] - caixa[0]) / 2 - caixa[0],
+                         cy - (caixa[3] - caixa[1]) / 2 - caixa[1]),
+                        rotulo, font=fonte, fill=tinta)
+
+    elif tipo == 'texto':
+        tamanho = forma.get('tamanho', 22)
+        largura, altura, altura_linha = medir_texto_pil(forma.get('texto', ''), tamanho)
+        largura = max(largura, forma.get('largura', 0))
+        altura = max(altura, forma.get('altura', 0))
+        x1, y1 = levar(forma['x'], forma['y'])
+        x2, y2 = levar(forma['x'] + largura, forma['y'] + altura)
+        pincel.rounded_rectangle((x1, y1, x2, y2),
+                                 radius=forma.get('raio', RAIO_TEXTO) * escala,
+                                 fill=cor)
+        tinta = tinta_sobre(cor)
+        fonte = fonte_negrito(max(6, int(tamanho * escala)))
+        for numero, linha in enumerate((forma.get('texto', '') or '').split('\n')):
+            if not linha:
+                continue
+            px, py = levar(forma['x'] + FOLGA_TEXTO_X,
+                           forma['y'] + FOLGA_TEXTO_Y + numero * altura_linha)
+            pincel.text((px, py), linha, font=fonte, fill=tinta, anchor='la')
+
+
+def desenhar_forma_suave(imagem, forma):
+    """Desenha a forma numa camada ampliada e reduz, para suavizar a borda.
+
+    O ImageDraw nao faz antisserrilhamento: circulo e diagonal saem em escada, e
+    o anel branco de 3 px do callout praticamente desaparece. A camada e do
+    tamanho da forma, nao da imagem, para nao estourar memoria.
+    """
+    caixa = caixa_da_forma(forma)
+    if not caixa:
+        return False
+    x0, y0, x1, y1 = caixa
+
+    largura, altura = x1 - x0, y1 - y0
     if largura < 2 or altura < 2:
         return False
-    # Teto de seguranca: seta absurda nao vira camada gigante.
-    if largura * altura * SUPERAMOSTRAGEM ** 2 > 120_000_000:
+    if largura * altura * SUPERAMOSTRAGEM ** 2 > TETO_DA_CAMADA:
         return False
 
     escala = SUPERAMOSTRAGEM
@@ -329,15 +449,7 @@ def desenhar_seta_suave(imagem, forma):
     def levar(px, py):
         return ((px - x0) * escala, (py - y0) * escala)
 
-    largura_da_linha = max(1, int(round(esp * escala)))
-    pincel.line((*levar(ax1, ay1), *levar(ax2, ay2)), fill=cor, width=largura_da_linha)
-
-    # Ponta arredondada no rabo, como o capstyle do editor.
-    raio = largura_da_linha / 2
-    tx, ty = levar(ax1, ay1)
-    pincel.ellipse((tx - raio, ty - raio, tx + raio, ty + raio), fill=cor)
-
-    pincel.polygon([levar(cx, cy) for cx, cy in cabeca], fill=cor)
+    pintar_forma(pincel, forma, levar, escala)
 
     reduzida = camada.resize((largura, altura), Image.LANCZOS)
     imagem.paste(reduzida, (x0, y0), reduzida)
@@ -345,71 +457,19 @@ def desenhar_seta_suave(imagem, forma):
 
 
 def desenhar_em_imagem(imagem, formas):
-    """Aplica as formas sobre uma copia da imagem e devolve o resultado."""
+    """Aplica as formas sobre uma copia da imagem e devolve o resultado.
+
+    Toda forma passa pela camada ampliada. A reserva sem suavizacao existe para
+    o caso de a caixa ser degenerada ou grande demais.
+    """
     saida = imagem.convert('RGB').copy()
     pincel = ImageDraw.Draw(saida)
 
     for forma in formas:
-        cor = forma['cor']
-        tipo = forma['tipo']
-
-        if tipo == 'marcador':
-            x1, y1, x2, y2 = forma['x1'], forma['y1'], forma['x2'], forma['y2']
-            pincel.rounded_rectangle(
-                (min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2)),
-                radius=forma.get('raio', RAIO_CANTO),
-                outline=cor,
-                width=forma['esp'],
-            )
-
-        elif tipo == 'seta':
-            if desenhar_seta_suave(saida, forma):
-                # A camada suave foi colada direto na imagem; o pincel antigo
-                # ficou apontando para os mesmos pixels, entao segue valido.
-                continue
-            # Reserva, se a caixa for degenerada: traco simples, sem suavizar.
-            esp = forma['esp']
-            cabeca = cabeca_de_seta(forma['x1'], forma['y1'], forma['x2'], forma['y2'], esp)
-            recuo = max(16.0, esp * 5.2) * 0.78
-            ax1, ay1, ax2, ay2 = encurtar(forma['x1'], forma['y1'], forma['x2'], forma['y2'], recuo)
-            pincel.line((ax1, ay1, ax2, ay2), fill=cor, width=esp)
-            pincel.polygon(cabeca, fill=cor)
-
-        elif tipo == 'texto':
-            tamanho = forma.get('tamanho', 22)
-            largura, altura, altura_linha = medir_texto_pil(forma.get('texto', ''), tamanho)
-            # Se o editor ja mediu, o valor dele manda: ele considera tambem a
-            # metrica do tkinter, e a caixa fica boa nos dois lugares.
-            largura = max(largura, forma.get('largura', 0))
-            altura = max(altura, forma.get('altura', 0))
-
-            x, y = forma['x'], forma['y']
-            pincel.rounded_rectangle((x, y, x + largura, y + altura),
-                                     radius=forma.get('raio', RAIO_TEXTO), fill=cor)
-
-            tinta = tinta_sobre(cor)
-            fonte = fonte_negrito(tamanho)
-            for numero, linha in enumerate((forma.get('texto', '') or '').split('\n')):
-                if not linha:
-                    continue
-                pincel.text((x + FOLGA_TEXTO_X,
-                             y + FOLGA_TEXTO_Y + numero * altura_linha),
-                            linha, font=fonte, fill=tinta, anchor='la')
-
-        elif tipo == 'callout':
-            x, y, r = forma['x'], forma['y'], forma.get('r', RAIO_CALLOUT)
-            tinta = tinta_sobre(cor)
-            pincel.ellipse((x - r, y - r, x + r, y + r), fill=cor,
-                           outline=BRANCO if tinta == BRANCO else cor, width=2)
-            rotulo = str(forma.get('rotulo', ''))
-            if rotulo:
-                fonte = fonte_negrito(max(10, int(r * 1.15)))
-                caixa = pincel.textbbox((0, 0), rotulo, font=fonte)
-                largura, altura = caixa[2] - caixa[0], caixa[3] - caixa[1]
-                pincel.text(
-                    (x - largura / 2 - caixa[0], y - altura / 2 - caixa[1]),
-                    rotulo, font=fonte, fill=tinta,
-                )
+        if desenhar_forma_suave(saida, forma):
+            continue
+        # Reserva: desenha direto, sem suavizar.
+        pintar_forma(pincel, forma, lambda px, py: (px, py), 1)
 
     return saida
 
@@ -1024,7 +1084,7 @@ class Editor:
                         forma['y'] - 4 <= y <= forma['y'] + forma.get('altura', 0) + 4):
                     return indice
             elif forma['tipo'] == 'callout':
-                if math.hypot(x - forma['x'], y - forma['y']) <= forma.get('r', RAIO_CALLOUT) + 4:
+                if math.hypot(x - forma['x'], y - forma['y']) <= raio_do_callout(forma) + 4:
                     return indice
             elif forma['tipo'] == 'seta':
                 if self.perto_da_linha(x, y, forma['x1'], forma['y1'], forma['x2'], forma['y2'], 8):
@@ -1054,8 +1114,7 @@ class Editor:
         if forma['tipo'] == 'texto':
             return [(forma['x'] + forma.get('largura', 0), forma['y'] + forma.get('altura', 0))]
         if forma['tipo'] == 'callout':
-            r = forma.get('r', RAIO_CALLOUT)
-            return [(forma['x'] + r, forma['y'])]
+            return [(forma['x'] + raio_do_callout(forma), forma['y'])]
         if forma['tipo'] == 'seta':
             return [(forma['x1'], forma['y1']), (forma['x2'], forma['y2'])]
         x1, x2 = sorted((forma['x1'], forma['x2']))
@@ -1145,16 +1204,18 @@ class Editor:
 
         elif tipo == 'callout':
             x, y = self.para_tela(forma['x'], forma['y'])
-            r = forma.get('r', RAIO_CALLOUT) * self.escala
+            r = raio_do_callout(forma) * self.escala
+            base = float(forma.get('r', RAIO_CALLOUT))
             tinta = tinta_sobre(cor)
-            self.canvas.create_oval(x - r, y - r, x + r, y + r, fill=cor,
-                                    outline=BRANCO if tinta == BRANCO else cor,
-                                    width=max(1, int(2 * self.escala)),
-                                    tags='anotacao')
+            self.canvas.create_oval(
+                x - r, y - r, x + r, y + r, fill=cor, outline=BRANCO,
+                width=max(1, int(round(CONTORNO_CALLOUT * self.escala))),
+                tags='anotacao')
             if forma.get('rotulo'):
-                self.canvas.create_text(x, y, text=forma['rotulo'], fill=tinta,
-                                        font=('Segoe UI', max(7, int(r * 0.95)), 'bold'),
-                                        tags='anotacao')
+                self.canvas.create_text(
+                    x, y, text=forma['rotulo'], fill=tinta,
+                    font=('Segoe UI', max(6, int(base * FONTE_SOBRE_RAIO * self.escala)), 'bold'),
+                    tags='anotacao')
 
     def desenhar_alcas(self, indice):
         for ax, ay in self.alcas_de(indice):
