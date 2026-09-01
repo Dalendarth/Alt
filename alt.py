@@ -516,16 +516,60 @@ def desenhar_em_imagem(imagem, formas):
 # ---------------------------------------------------------------------------
 
 
+def monitor_do_cursor():
+    """Retangulo do monitor onde o cursor esta, em coordenadas de tela.
+
+    A dica era centrada no meio do desktop virtual. Com dois monitores isso cai
+    na juncao, e o texto sai partido entre as duas telas.
+    """
+    class PONTO(ctypes.Structure):
+        _fields_ = [('x', ctypes.c_long), ('y', ctypes.c_long)]
+
+    class RETANGULO(ctypes.Structure):
+        _fields_ = [('left', ctypes.c_long), ('top', ctypes.c_long),
+                    ('right', ctypes.c_long), ('bottom', ctypes.c_long)]
+
+    class INFO(ctypes.Structure):
+        _fields_ = [('cbSize', ctypes.c_ulong), ('rcMonitor', RETANGULO),
+                    ('rcWork', RETANGULO), ('dwFlags', ctypes.c_ulong)]
+
+    usuario = ctypes.windll.user32
+    ponto = PONTO()
+    usuario.GetCursorPos(ctypes.byref(ponto))
+
+    usuario.MonitorFromPoint.restype = ctypes.c_void_p
+    monitor = usuario.MonitorFromPoint(ponto, 2)  # MONITOR_DEFAULTTONEAREST
+
+    info = INFO()
+    info.cbSize = ctypes.sizeof(INFO)
+    if not usuario.GetMonitorInfoW(ctypes.c_void_p(monitor), ctypes.byref(info)):
+        return None
+    r = info.rcMonitor
+    return (r.left, r.top, r.right, r.bottom)
+
+
 class SelecaoDeArea:
-    """Tela cheia com o print congelado; arrastar escolhe o recorte."""
+    """Tela cheia com o print congelado; arrastar escolhe o recorte.
+
+    O escurecimento e feito pelo Pillow, e nao por retangulo com stipple no
+    canvas: o stipple e um xadrez de meio pixel, que na tela aparece como risco
+    microscopico e faz tudo parecer embacado.
+
+    A area escolhida mostra o print em brilho cheio, recortado do original.
+    """
+
+    ESCURECIMENTO = 0.58
+    INTERVALO_DE_REDESENHO = 0.025   # segundos, para o arrasto nao afogar
 
     def __init__(self, mestre, imagem, origem_x, origem_y, ao_confirmar):
         self.imagem = imagem
         self.ox, self.oy = origem_x, origem_y
         self.ao_confirmar = ao_confirmar
         self.inicio = None
+        self.item_claro = None
         self.retangulo = None
         self.rotulo = None
+        self.ultimo_desenho = 0.0
 
         largura, altura = imagem.size
 
@@ -533,85 +577,156 @@ class SelecaoDeArea:
         self.janela.overrideredirect(True)
         self.janela.geometry(f'{largura}x{altura}+{origem_x}+{origem_y}')
         self.janela.attributes('-topmost', True)
-        self.janela.configure(cursor='crosshair', bg='black')
+        self.janela.configure(bg='black')
+        aplicar_icone(self.janela)
 
-        self.foto = ImageTk.PhotoImage(imagem)
         self.canvas = tk.Canvas(self.janela, width=largura, height=altura,
                                 highlightthickness=0, bd=0, bg='black')
         self.canvas.pack(fill='both', expand=True)
-        self.canvas.create_image(0, 0, image=self.foto, anchor='nw')
 
-        # Escurece tudo. O stipple e o jeito de simular transparencia no canvas.
-        self.sombras = [
-            self.canvas.create_rectangle(0, 0, largura, altura, fill='#000000',
-                                         stipple='gray50', width=0)
-        ]
+        # Fundo escurecido de uma vez, sem trama.
+        escura = Image.blend(imagem, Image.new('RGB', imagem.size, (8, 10, 14)),
+                             self.ESCURECIMENTO)
+        self.foto_escura = ImageTk.PhotoImage(escura)
+        self.canvas.create_image(0, 0, image=self.foto_escura, anchor='nw')
 
-        self.dica = self.canvas.create_text(
-            largura // 2, 34,
-            text='Arraste para escolher a área   ·   Enter captura a tela inteira   ·   Esc cancela',
-            fill=BRANCO, font=('Segoe UI', 12, 'bold'),
-        )
+        # Guias que acompanham o cursor: o cursor de cruz do Windows e preto e
+        # desaparece sobre o fundo escuro.
+        self.guia_x = self.canvas.create_line(0, 0, 0, altura, fill=MAGENTA,
+                                              width=1, dash=(4, 4))
+        self.guia_y = self.canvas.create_line(0, 0, largura, 0, fill=MAGENTA,
+                                              width=1, dash=(4, 4))
+
+        self.montar_dica(largura, altura)
 
         self.canvas.bind('<ButtonPress-1>', self.pressionou)
         self.canvas.bind('<B1-Motion>', self.arrastou)
         self.canvas.bind('<ButtonRelease-1>', self.soltou)
+        self.canvas.bind('<Motion>', self.moveu)
         self.janela.bind('<Escape>', lambda _e: self.cancelar())
         self.janela.bind('<Button-3>', lambda _e: self.cancelar())
         self.janela.bind('<Return>', lambda _e: self.tela_inteira())
         self.janela.focus_force()
+        self.canvas.configure(cursor='crosshair')
+
+    # -- dica --------------------------------------------------------------
+
+    def montar_dica(self, largura, altura):
+        """Caixa de instrucao centrada no monitor onde o cursor esta."""
+        area = monitor_do_cursor()
+        if area:
+            centro_x = (area[0] + area[2]) / 2 - self.ox
+            topo = area[1] - self.oy + 30
+        else:
+            centro_x, topo = largura / 2, 30
+
+        # Da mais curta se a tela for estreita: deslocar nao resolve texto mais
+        # largo do que a propria tela.
+        VERSOES = (
+            'Arraste para escolher a área      Enter tela inteira      Esc cancela',
+            'Arraste  ·  Enter tela inteira  ·  Esc cancela',
+            'Arraste  ·  Esc cancela',
+        )
+        self.dica_texto = self.canvas.create_text(
+            centro_x, topo + 20, text=VERSOES[0], fill=BRANCO,
+            font=('Segoe UI', 12, 'bold'), anchor='center')
+
+        # A folga considera os 18 px que o fundo acrescenta de cada lado, senao
+        # a moldura estoura a borda mesmo com o texto dentro.
+        FOLGA = 36
+        for versao in VERSOES:
+            self.canvas.itemconfigure(self.dica_texto, text=versao)
+            caixa = self.canvas.bbox(self.dica_texto)
+            if not caixa or (caixa[2] - caixa[0]) + FOLGA * 2 <= largura:
+                break
+        caixa = self.canvas.bbox(self.dica_texto)
+        if caixa:
+            deslocar_x = deslocar_y = 0
+            if caixa[0] < FOLGA:
+                deslocar_x = FOLGA - caixa[0]
+            elif caixa[2] > largura - FOLGA:
+                deslocar_x = (largura - FOLGA) - caixa[2]
+            if caixa[1] < FOLGA:
+                deslocar_y = FOLGA - caixa[1]
+            elif caixa[3] > altura - FOLGA:
+                deslocar_y = (altura - FOLGA) - caixa[3]
+            if deslocar_x or deslocar_y:
+                self.canvas.move(self.dica_texto, deslocar_x, deslocar_y)
+
+        # Fundo da dica, do tamanho do texto, desenhado atras dele.
+        caixa = self.canvas.bbox(self.dica_texto)
+        if caixa:
+            self.dica_fundo = self.canvas.create_rectangle(
+                caixa[0] - 18, caixa[1] - 11, caixa[2] + 18, caixa[3] + 11,
+                fill='#11151C', outline=MAGENTA, width=1)
+            self.canvas.tag_raise(self.dica_texto)
+
+    def sumir_dica(self):
+        for item in ('dica_texto', 'dica_fundo'):
+            alvo = getattr(self, item, None)
+            if alvo is not None:
+                self.canvas.delete(alvo)
+                setattr(self, item, None)
 
     # -- interacao ---------------------------------------------------------
 
+    def moveu(self, evento):
+        self.canvas.coords(self.guia_x, evento.x, 0, evento.x, self.imagem.size[1])
+        self.canvas.coords(self.guia_y, 0, evento.y, self.imagem.size[0], evento.y)
+
     def pressionou(self, evento):
         self.inicio = (evento.x, evento.y)
-        self.canvas.delete(self.dica)
-        self.dica = None
+        self.sumir_dica()
 
     def arrastou(self, evento):
         if not self.inicio:
             return
-        x1, y1 = self.inicio
-        x2, y2 = evento.x, evento.y
-        self.redesenhar_sombra(x1, y1, x2, y2)
+        self.moveu(evento)
+
+        agora = time.time()
+        if agora - self.ultimo_desenho < self.INTERVALO_DE_REDESENHO:
+            return
+        self.ultimo_desenho = agora
+        self.mostrar(self.inicio[0], self.inicio[1], evento.x, evento.y)
+
+    def mostrar(self, x1, y1, x2, y2):
+        """Mostra a area escolhida em brilho cheio, com moldura e medida."""
+        ex, dx = int(min(x1, x2)), int(max(x1, x2))
+        cy, by = int(min(y1, y2)), int(max(y1, y2))
+
+        if self.item_claro is not None:
+            self.canvas.delete(self.item_claro)
+            self.item_claro = None
+
+        if dx - ex >= 1 and by - cy >= 1:
+            recorte = self.imagem.crop((ex, cy, dx, by))
+            self.foto_clara = ImageTk.PhotoImage(recorte)  # nao deixar coletar
+            self.item_claro = self.canvas.create_image(ex, cy, image=self.foto_clara,
+                                                       anchor='nw')
 
         if self.retangulo:
-            self.canvas.coords(self.retangulo, min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2))
+            self.canvas.coords(self.retangulo, ex, cy, dx, by)
         else:
-            self.retangulo = self.canvas.create_rectangle(
-                min(x1, x2), min(y1, y2), max(x1, x2), max(y1, y2),
-                outline=MAGENTA, width=2,
-            )
+            self.retangulo = self.canvas.create_rectangle(ex, cy, dx, by,
+                                                          outline=MAGENTA, width=2)
 
-        texto = f'{abs(x2 - x1)} × {abs(y2 - y1)}'
-        tx, ty = max(x1, x2), min(y1, y2) - 14
-        if ty < 12:
-            ty = max(y1, y2) + 14
+        texto = f'{dx - ex} × {by - cy}'
+        tx, ty = dx, cy - 16
+        ancora = 'se'
+        if ty < 14:
+            ty, ancora = by + 16, 'ne'
         if self.rotulo:
             self.canvas.coords(self.rotulo, tx, ty)
-            self.canvas.itemconfigure(self.rotulo, text=texto)
+            self.canvas.itemconfigure(self.rotulo, text=texto, anchor=ancora)
         else:
-            self.rotulo = self.canvas.create_text(tx, ty, text=texto, fill=BRANCO,
-                                                  anchor='e', font=('Consolas', 11, 'bold'))
+            self.rotulo = self.canvas.create_text(
+                tx, ty, text=texto, fill=BRANCO, anchor=ancora,
+                font=('Consolas', 12, 'bold'))
 
-    def redesenhar_sombra(self, x1, y1, x2, y2):
-        """Quatro faixas escuras em volta do recorte, deixando ele limpo."""
-        largura, altura = self.imagem.size
-        ex, dx = min(x1, x2), max(x1, x2)
-        cy, by = min(y1, y2), max(y1, y2)
-
-        for item in self.sombras:
-            self.canvas.delete(item)
-        self.sombras = [
-            self.canvas.create_rectangle(0, 0, largura, cy, fill='#000000', stipple='gray50', width=0),
-            self.canvas.create_rectangle(0, by, largura, altura, fill='#000000', stipple='gray50', width=0),
-            self.canvas.create_rectangle(0, cy, ex, by, fill='#000000', stipple='gray50', width=0),
-            self.canvas.create_rectangle(dx, cy, largura, by, fill='#000000', stipple='gray50', width=0),
-        ]
-        if self.retangulo:
-            self.canvas.tag_raise(self.retangulo)
-        if self.rotulo:
-            self.canvas.tag_raise(self.rotulo)
+        self.canvas.tag_raise(self.retangulo)
+        self.canvas.tag_raise(self.rotulo)
+        self.canvas.tag_raise(self.guia_x)
+        self.canvas.tag_raise(self.guia_y)
 
     def soltou(self, evento):
         if not self.inicio:

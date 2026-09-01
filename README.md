@@ -190,7 +190,7 @@ Arquivo único, `alt.py`, em cinco partes:
 | Parte | O que faz |
 |---|---|
 | Captura | `ImageGrab` sobre o desktop virtual inteiro, com consciência de DPI por monitor |
-| `SelecaoDeArea` | tela cheia com o print congelado; quatro faixas escurecidas em volta do recorte |
+| `SelecaoDeArea` | tela cheia com o print congelado, escurecido pelo Pillow; a área escolhida aparece em brilho cheio |
 | `Editor` | canvas com as formas em coordenadas de imagem; exporta pelo Pillow, não pelo canvas |
 | `GanchoDeTeclado` | `WH_KEYBOARD_LL`, que é o único jeito confiável de ouvir o Print Screen |
 | `Bandeja` | ícone e gancho no mesmo fio, porque dependem do mesmo laço de mensagens do Windows |
@@ -210,6 +210,16 @@ Quatro decisões que valem saber ao mexer:
   formas vivem em coordenadas de imagem, e a prévia é a mesma camada reescalada.
 - **Alças e cursor continuam no canvas**, por cima da camada. São controle da
   interface, não anotação, e não entram no arquivo.
+- **A tela de seleção escurece pelo Pillow, não por `stipple` no canvas.** O
+  `stipple` é um xadrez de meio pixel: na tela vira risco microscópico e faz tudo
+  parecer embaçado. A área escolhida é um recorte do print original, em brilho
+  cheio, colado por cima do escuro.
+- **As guias magenta que seguem o cursor existem porque o cursor de cruz do Windows
+  é preto** e desaparece sobre o fundo escurecido.
+- **A dica é medida, não estimada, e se centra no monitor onde o cursor está.**
+  Centrar no meio do desktop virtual punha o texto na junção entre os dois
+  monitores; estimar a largura cortava a caixa na borda. Em tela estreita ela troca
+  por uma versão mais curta.
 - **Toda forma é desenhada por superamostragem 4×**, cada uma numa camada RGBA do
   tamanho dela, reduzida com LANCZOS. O `ImageDraw` não suaviza borda: círculo e
   diagonal saem em escada, e o anel branco de 3 px do callout praticamente
