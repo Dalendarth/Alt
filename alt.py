@@ -583,6 +583,7 @@ class Editor:
         self.janela.title('Alt')
         self.janela.configure(bg=FUNDO)
         self.janela.attributes('-topmost', True)
+        aplicar_icone(self.janela)
 
         self.escala = self.calcular_escala()
         self.montar_barra()
@@ -1311,6 +1312,55 @@ def gerar_icone():
     return ICONE
 
 
+WM_SETICON = 0x0080
+ICONE_GRANDE, ICONE_PEQUENO = 1, 0
+
+
+def aplicar_icone(janela):
+    """Poe o icone do Alt na janela, no lugar da pena do Tk.
+
+    Toda janela tkinter nasce com o logo do Tcl/Tk — uma pena — no canto e na
+    barra de tarefas.
+
+    Dois caminhos, de proposito. O `default=` do iconbitmap vale para toda
+    Toplevel criada depois, mas o Tk o aplica na classe da janela, e nao da para
+    ler de volta nem garantir que pegou. O WM_SETICON e direto no identificador
+    da janela: e o que se pode conferir depois.
+    """
+    caminho = gerar_icone()
+    aplicou = False
+
+    try:
+        janela.iconbitmap(default=caminho)
+        aplicou = True
+    except Exception:
+        try:
+            janela.iconphoto(True, ImageTk.PhotoImage(Image.open(caminho)))
+            aplicou = True
+        except Exception:
+            pass
+
+    try:
+        janela.update_idletasks()
+        usuario = ctypes.windll.user32
+        usuario.GetAncestor.restype = ctypes.c_void_p
+        usuario.SendMessageW.restype = ctypes.c_void_p
+        usuario.LoadImageW.restype = ctypes.c_void_p
+
+        # GA_ROOT: o winfo_id pode devolver um filho, e o icone vive no topo.
+        hwnd = usuario.GetAncestor(ctypes.c_void_p(janela.winfo_id()), 2)
+        for qual, lado in ((ICONE_GRANDE, 32), (ICONE_PEQUENO, 16)):
+            hicone = usuario.LoadImageW(None, caminho, 1, lado, lado, 0x0010)
+            if hicone:
+                usuario.SendMessageW(ctypes.c_void_p(hwnd), WM_SETICON,
+                                     qual, ctypes.c_void_p(hicone))
+                aplicou = True
+    except Exception:
+        pass
+
+    return aplicou
+
+
 # ---------------------------------------------------------------------------
 # GANCHO DE TECLADO DE BAIXO NIVEL
 #
@@ -1643,6 +1693,7 @@ class Alt:
     def __init__(self, mostrar_painel=False, espiar=None):
         self.raiz = tk.Tk()
         self.raiz.withdraw()
+        aplicar_icone(self.raiz)
         self.ocupado = False
         self.fila = queue.Queue()
 

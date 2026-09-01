@@ -206,6 +206,10 @@ Quatro decisões que valem saber ao mexer:
   por um deles corta o texto no outro.
 - **A referência do callback do gancho tem de ficar viva.** Se o Python coletar o
   objeto, o Windows chama memória liberada e o processo morre sem aviso.
+- **O ícone das janelas é aplicado por dois caminhos.** Toda janela `tkinter` nasce
+  com a pena do Tcl/Tk. O `iconbitmap(default=...)` vale para as Toplevel criadas
+  depois, mas o Tk o grava na classe da janela e não há como ler de volta; o
+  `WM_SETICON` é direto no identificador e é o que se pode conferir.
 
 ### Onde as coisas ficam
 
