@@ -201,8 +201,15 @@ Quatro decisões que valem saber ao mexer:
   `WM_HOTKEY` na janela que registrou, e o `Shell_NotifyIcon` entrega o clique do
   ícone na mesma janela. Nada de `tkinter` nesse fio: os avisos vão para uma fila e
   o fio principal consome.
-- **O desenho final é feito pelo Pillow**, não capturando o canvas. É o que garante
-  que o arquivo saia em resolução cheia mesmo quando o editor exibe reduzido.
+- **A prévia do editor é desenhada pelo mesmo Pillow que gera o arquivo.** O canvas
+  do Tk não suaviza borda, então desenhar as formas nele dava uma prévia diferente
+  do resultado. Agora o canvas só exibe uma camada RGBA renderizada pelo Pillow na
+  escala de exibição. Custa de 24 a 45 ms por quadro — a ferramenta é para tirar
+  print, e conformidade visual vale mais do que quadros por segundo.
+- **O arquivo sai em resolução cheia** mesmo quando o editor exibe reduzido: as
+  formas vivem em coordenadas de imagem, e a prévia é a mesma camada reescalada.
+- **Alças e cursor continuam no canvas**, por cima da camada. São controle da
+  interface, não anotação, e não entram no arquivo.
 - **Toda forma é desenhada por superamostragem 4×**, cada uma numa camada RGBA do
   tamanho dela, reduzida com LANCZOS. O `ImageDraw` não suaviza borda: círculo e
   diagonal saem em escada, e o anel branco de 3 px do callout praticamente

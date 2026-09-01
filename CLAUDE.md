@@ -48,9 +48,22 @@ fio principal consome.
 tkinter.** O Pillow desenha o arquivo e o tkinter desenha o editor; medir por um só
 corta o texto no outro.
 
-**As formas vivem em coordenadas de imagem, não de tela, e o arquivo final é
-desenhado pelo Pillow**, nunca capturando o canvas. É o que garante resolução cheia
-quando o editor exibe reduzido.
+**As formas vivem em coordenadas de imagem, não de tela, e tudo é desenhado pelo
+Pillow** — inclusive a prévia do editor, que é uma camada RGBA reescalada e exibida
+pelo canvas. O canvas do Tk não suaviza borda; desenhar nele dava prévia diferente do
+arquivo. Isso foi decisão explícita do Guilherme: **conformidade visual acima de
+desempenho**, porque a ferramenta é para tirar print. Custa 24 a 45 ms por quadro.
+Não volte a desenhar formas no canvas. Alças e cursor seguem no canvas de propósito:
+são controle da interface e não entram no arquivo.
+
+**Toda forma é suavizada por superamostragem 4×**, cada uma numa camada do tamanho
+dela. Uma camada 4× do print inteiro passaria de 280 MB — por isso é por forma, com
+teto de tamanho e reserva sem suavizar.
+
+**O raio do callout acompanha o rótulo, e a fonte vem do raio da alça.** Da alça, não
+do raio efetivo: do efetivo, crescer o círculo cresceria a letra, que cresceria o
+círculo de novo. A alça define o mínimo; o círculo só passa disso quando o texto não
+caberia. O anel branco é de 3 px, como no protótipo que gerou os prints do manual.
 
 **O executável é montado em pasta (`--onedir`), não em arquivo único.** Arquivo único
 se autodescompacta no `%TEMP%` a cada abertura, e a heurística do Kaspersky — que o

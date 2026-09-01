@@ -424,6 +424,38 @@ def pintar_forma(pincel, forma, levar, escala):
             pincel.text((px, py), linha, font=fonte, fill=tinta, anchor='la')
 
 
+CAMPOS_DE_ESCALA = ('x', 'y', 'x1', 'y1', 'x2', 'y2', 'r', 'esp', 'raio',
+                    'tamanho', 'largura', 'altura', 'entrelinha')
+
+
+def escalar_forma(forma, fator):
+    """Copia da forma com toda medida multiplicada.
+
+    Serve para desenhar a previa reduzida com o mesmo codigo do arquivo: em vez
+    de um caminho de desenho separado para a tela, a forma e reescalada e passa
+    pelo mesmo pincel.
+    """
+    if fator == 1.0:
+        return forma
+    copia = dict(forma)
+    for campo in CAMPOS_DE_ESCALA:
+        if campo in copia and isinstance(copia[campo], (int, float)):
+            copia[campo] = copia[campo] * fator
+    return copia
+
+
+def renderizar_anotacoes(tamanho, formas, fator=1.0):
+    """Camada transparente com as formas, para sobrepor a previa."""
+    camada = Image.new('RGBA', tamanho, (0, 0, 0, 0))
+    pincel = ImageDraw.Draw(camada)
+    for forma in formas:
+        escalada = escalar_forma(forma, fator)
+        if desenhar_forma_suave(camada, escalada):
+            continue
+        pintar_forma(pincel, escalada, lambda px, py: (px, py), 1)
+    return camada
+
+
 def desenhar_forma_suave(imagem, forma):
     """Desenha a forma numa camada ampliada e reduz, para suavizar a borda.
 
@@ -452,7 +484,12 @@ def desenhar_forma_suave(imagem, forma):
     pintar_forma(pincel, forma, levar, escala)
 
     reduzida = camada.resize((largura, altura), Image.LANCZOS)
-    imagem.paste(reduzida, (x0, y0), reduzida)
+    if imagem.mode == 'RGBA':
+        # Numa camada transparente a colagem com mascara zeraria o alfa em volta
+        # e recortaria a forma anterior; a composicao respeita as duas.
+        imagem.alpha_composite(reduzida, dest=(max(0, x0), max(0, y0)))
+    else:
+        imagem.paste(reduzida, (x0, y0), reduzida)
     return True
 
 
@@ -1131,91 +1168,59 @@ class Editor:
     # -- desenho no canvas -------------------------------------------------
 
     def redesenhar(self):
+        """Redesenha a previa com o mesmo pincel que gera o arquivo.
+
+        O canvas do Tk nao suaviza borda, entao desenhar as formas nele daria
+        uma previa diferente do resultado. Aqui a camada e do Pillow, reduzida
+        para a escala de exibicao, e o canvas so a exibe. Custa mais por quadro,
+        e e uma troca deliberada: a ferramenta e para tirar print, e o que
+        importa e a previa bater com o que sai.
+        """
         self.canvas.delete('anotacao')
+        self.canvas.delete('camada')
 
-        for indice, forma in enumerate(self.formas):
-            self.desenhar_forma(forma)
-            if indice == self.selecionada and self.ferramenta.get() == 'selecionar':
-                self.desenhar_alcas(indice)
-
+        formas = list(self.formas)
         if self.previa:
-            self.desenhar_forma(self.previa)
+            formas.append(self.previa)
 
-    def desenhar_forma(self, forma):
-        cor = forma['cor']
-        tipo = forma['tipo']
-        esp = max(1, int(round(forma.get('esp', 3) * max(self.escala, 0.35))))
+        if formas:
+            camada = renderizar_anotacoes(
+                (self.largura_tela, self.altura_tela), formas, self.escala)
+            self.foto_da_camada = ImageTk.PhotoImage(camada)  # nao deixar coletar
+            self.canvas.create_image(0, 0, image=self.foto_da_camada, anchor='nw',
+                                     tags='camada')
+        else:
+            self.foto_da_camada = None
 
-        if tipo == 'marcador':
-            pontos = pontos_arredondados(
-                *self.para_tela(forma['x1'], forma['y1']),
-                *self.para_tela(forma['x2'], forma['y2']),
-                forma.get('raio', RAIO_CANTO) * self.escala,
-            )
-            self.canvas.create_polygon(pontos, outline=cor, fill='', width=esp,
-                                       tags='anotacao')
+        # Alcas e cursor sao controle da interface, nao anotacao: seguem no
+        # canvas, por cima da camada, e nao entram no arquivo.
+        if self.selecionada is not None and self.ferramenta.get() == 'selecionar':
+            self.desenhar_alcas(self.selecionada)
+        self.desenhar_cursor()
 
-        elif tipo == 'seta':
-            x1, y1 = self.para_tela(forma['x1'], forma['y1'])
-            x2, y2 = self.para_tela(forma['x2'], forma['y2'])
-            comprimento = max(16.0, forma.get('esp', 3) * 5.2) * self.escala
-            largura = max(13.0, forma.get('esp', 3) * 4.2) * self.escala
-            self.canvas.create_line(
-                x1, y1, x2, y2, fill=cor, width=esp, capstyle='round',
-                arrow='last', arrowshape=(comprimento, comprimento, largura / 2),
-                tags='anotacao',
-            )
+    def desenhar_cursor(self):
+        """Cursor piscando no fim do texto da etiqueta em digitacao."""
+        if self.editando is None or not self.cursor_visivel:
+            return
+        forma = self.formas[self.editando]
+        if forma['tipo'] != 'texto':
+            return
 
-        elif tipo == 'texto':
-            largura = forma.get('largura') or self.medir(forma)['largura']
-            altura = forma.get('altura') or forma['altura']
-            entrelinha = forma.get('entrelinha', forma.get('tamanho', 22) * 1.3)
-            x1, y1 = self.para_tela(forma['x'], forma['y'])
-            x2, y2 = self.para_tela(forma['x'] + largura, forma['y'] + altura)
+        entrelinha = forma.get('entrelinha', forma.get('tamanho', 22) * 1.3)
+        linhas = (forma.get('texto', '') or '').split('\n')
+        tamanho_na_tela = max(6, int(forma.get('tamanho', 22) * self.escala))
+        try:
+            fonte = tkfont.Font(family='Segoe UI', size=tamanho_na_tela, weight='bold')
+            deslocamento = fonte.measure(linhas[-1])
+        except Exception:
+            deslocamento = 0
 
-            self.canvas.create_polygon(
-                pontos_arredondados(x1, y1, x2, y2, forma.get('raio', RAIO_TEXTO) * self.escala),
-                fill=cor, outline='', tags='anotacao')
-
-            tinta = tinta_sobre(cor)
-            tamanho_na_tela = max(6, int(forma.get('tamanho', 22) * self.escala))
-            linhas = (forma.get('texto', '') or '').split('\n')
-            for numero, linha in enumerate(linhas):
-                if not linha:
-                    continue
-                self.canvas.create_text(
-                    x1 + FOLGA_TEXTO_X * self.escala,
-                    y1 + (FOLGA_TEXTO_Y + numero * entrelinha) * self.escala,
-                    text=linha, fill=tinta, anchor='nw',
-                    font=('Segoe UI', tamanho_na_tela, 'bold'), tags='anotacao')
-
-            # Cursor no fim da ultima linha.
-            indice = self.formas.index(forma) if forma in self.formas else -1
-            if self.editando == indice and self.cursor_visivel:
-                try:
-                    fonte = tkfont.Font(family='Segoe UI', size=tamanho_na_tela, weight='bold')
-                    deslocamento = fonte.measure(linhas[-1])
-                except Exception:
-                    deslocamento = 0
-                cx = x1 + FOLGA_TEXTO_X * self.escala + deslocamento
-                cy = y1 + (FOLGA_TEXTO_Y + (len(linhas) - 1) * entrelinha) * self.escala
-                self.canvas.create_line(cx, cy, cx, cy + tamanho_na_tela * 1.25,
-                                        fill=tinta, width=2, tags='anotacao')
-
-        elif tipo == 'callout':
-            x, y = self.para_tela(forma['x'], forma['y'])
-            r = raio_do_callout(forma) * self.escala
-            base = float(forma.get('r', RAIO_CALLOUT))
-            tinta = tinta_sobre(cor)
-            self.canvas.create_oval(
-                x - r, y - r, x + r, y + r, fill=cor, outline=BRANCO,
-                width=max(1, int(round(CONTORNO_CALLOUT * self.escala))),
-                tags='anotacao')
-            if forma.get('rotulo'):
-                self.canvas.create_text(
-                    x, y, text=forma['rotulo'], fill=tinta,
-                    font=('Segoe UI', max(6, int(base * FONTE_SOBRE_RAIO * self.escala)), 'bold'),
-                    tags='anotacao')
+        x1, y1 = self.para_tela(forma['x'], forma['y'])
+        cx = x1 + FOLGA_TEXTO_X * self.escala + deslocamento
+        cy = y1 + (FOLGA_TEXTO_Y + (len(linhas) - 1) * entrelinha) * self.escala
+        self.canvas.create_line(cx, cy, cx, cy + tamanho_na_tela * 1.25,
+                                fill=tinta_sobre(forma['cor']), width=2,
+                                tags='anotacao')
 
     def desenhar_alcas(self, indice):
         for ax, ay in self.alcas_de(indice):
