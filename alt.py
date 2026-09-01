@@ -5,7 +5,7 @@ Quatro formas: seta, callout redondo com rotulo dentro, marcador retangular de
 cantos arredondados, e etiqueta de texto com fundo preenchido. As cores sao as
 mesmas do manual do Fieldly.
 
-Atalho global: Ctrl + Print Screen.
+Atalho global: Ctrl + Shift esquerdo + Print Screen.
 
 Uso:
     pythonw alt.py              fica na bandeja do sistema esperando o atalho
@@ -1564,7 +1564,15 @@ WM_SYSKEYUP = 0x0105
 VK_SNAPSHOT = 0x2C
 VK_CONTROL = 0x11
 VK_SHIFT = 0x10
+VK_LSHIFT = 0xA0
+VK_RSHIFT = 0xA1
 VK_MENU = 0x12
+
+# A combinacao que dispara a captura. O gancho de baixo nivel distingue o Shift
+# esquerdo do direito, o que o RegisterHotKey nao faz — por isso a reserva
+# aceita qualquer Shift.
+TECLAS_EXIGIDAS = (VK_CONTROL, VK_LSHIFT)
+NOME_DO_ATALHO = 'Ctrl + Shift esquerdo + Print Screen'
 
 
 class KBDLLHOOKSTRUCT(ctypes.Structure):
@@ -1642,7 +1650,7 @@ class GanchoDeTeclado:
         # Por isso tratamos as duas bordas, com um travao de tempo para nao
         # disparar duas vezes na mesma batida de tecla.
         if tecla == VK_SNAPSHOT and (descendo or subindo):
-            if pressionada(VK_CONTROL):
+            if all(pressionada(exigida) for exigida in TECLAS_EXIGIDAS):
                 agora = time.time()
                 if agora - self.ultimo > 0.45:
                     self.ultimo = agora
@@ -1666,8 +1674,8 @@ MOD_NOREPEAT = 0x4000
 
 # Reserva, para o caso raro de o gancho nao poder ser instalado.
 COMBINACOES = (
-    ('Ctrl + Alt + A', MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord('A')),
     ('Ctrl + Shift + Print Screen', MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, VK_SNAPSHOT),
+    ('Ctrl + Alt + A', MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, ord('A')),
 )
 
 ID_CAPTURAR = 1001
@@ -1750,7 +1758,7 @@ class Bandeja(threading.Thread):
         self.gancho = GanchoDeTeclado(lambda: self.fila.put('capturar'),
                                       espiar=self.espiar)
         if self.gancho.instalar():
-            self.registrado = 'Ctrl + Print Screen'
+            self.registrado = NOME_DO_ATALHO
             self.mecanismo = 'gancho de teclado'
             return
 
@@ -1782,12 +1790,13 @@ class Bandeja(threading.Thread):
     def avisar(self):
         """Balao de aviso ao subir, dizendo qual atalho ficou valendo."""
         wg = self.win32gui
-        if self.registrado == COMBINACOES[0][0]:
-            titulo, texto = 'Alt ativo', 'Ctrl + Print Screen para capturar.'
+        if self.registrado == NOME_DO_ATALHO:
+            titulo = 'Alt ativo'
+            texto = 'Ctrl + Shift esquerdo + Print Screen para capturar.'
         elif self.registrado:
             titulo = 'Alt ativo com outro atalho'
-            texto = (f'{self.registrado}.\nO Ctrl + Print Screen estava ocupado — '
-                     'desligue a captura do Windows em Acessibilidade → Teclado.')
+            texto = (f'{self.registrado}.\nO gancho de teclado nao pode ser '
+                     'instalado, entao esta reserva aceita qualquer Shift.')
         else:
             titulo = 'Alt sem atalho'
             texto = 'Nenhuma combinação ficou livre. Use o menu do ícone.'
@@ -2006,13 +2015,16 @@ def autoteste():
     if instalou:
         usuario = ctypes.windll.user32
         KEYUP = 0x0002
-        usuario.keybd_event(VK_CONTROL, 0, 0, 0)
-        time.sleep(0.04)
+        for exigida in TECLAS_EXIGIDAS:
+            usuario.keybd_event(exigida, 0, 0, 0)
+            time.sleep(0.03)
         usuario.keybd_event(VK_SNAPSHOT, 0, 0, 0)
         time.sleep(0.04)
         usuario.keybd_event(VK_SNAPSHOT, 0, KEYUP, 0)
-        time.sleep(0.04)
-        usuario.keybd_event(VK_CONTROL, 0, KEYUP, 0)
+        time.sleep(0.03)
+        for exigida in reversed(TECLAS_EXIGIDAS):
+            usuario.keybd_event(exigida, 0, KEYUP, 0)
+            time.sleep(0.02)
 
         # O gancho e chamado pelo Windows durante o bombeamento de mensagens.
         classe = ctypes.Structure
@@ -2022,10 +2034,11 @@ def autoteste():
             time.sleep(0.03)
 
         entregou = bool(recebidos)
-        print(f'  Ctrl + Print Screen {"ENTREGA CONFIRMADA" if entregou else "NAO CHEGOU"}')
+        print(f'  atalho              {NOME_DO_ATALHO}')
+        print(f'  entrega             {"CONFIRMADA" if entregou else "NAO CHEGOU"}')
         if not entregou:
             print('                      outro programa esta consumindo a tecla antes;')
-            print('                      o Alt cai na reserva Ctrl + Alt + A')
+            print('                      o Alt cai nas reservas abaixo')
         gancho.remover()
 
     usuario = ctypes.windll.user32

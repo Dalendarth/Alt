@@ -29,6 +29,11 @@ A paleta é a mesma do manual do Fieldly e não muda por conta própria:
 
 Estas custaram depuração. Não as desfaça sem entender o motivo.
 
+**O atalho é `Ctrl + Shift esquerdo + Print Screen`**, definido em
+`TECLAS_EXIGIDAS`. O **esquerdo** é exigido de propósito, e só o gancho de baixo
+nível sabe distinguir: `RegisterHotKey` conhece apenas "Shift". A reserva por
+`RegisterHotKey` aceita qualquer Shift, e isso é aceito.
+
 **O Print Screen é ouvido por `WH_KEYBOARD_LL`, não por `RegisterHotKey`.** Para essa
 tecla o `RegisterHotKey` aceita o registro e devolve sucesso, mas o evento nunca
 chega: antivírus, OneDrive e a captura do próprio Windows têm gancho de baixo nível e

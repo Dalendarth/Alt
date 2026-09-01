@@ -6,7 +6,7 @@ Ferramenta de print anotado para Windows. Quatro formas: **seta**, **callout
 redondo** com número ou letra dentro, **marcador retangular** de cantos
 arredondados, e **etiqueta de texto** com fundo preenchido.
 
-Fica na bandeja do sistema e abre com **Ctrl + Print Screen**.
+Fica na bandeja do sistema e abre com **Ctrl + Shift esquerdo + Print Screen**.
 
 Existe porque as ferramentas do gênero fazem trinta coisas e eu queria quatro, com
 uma paleta fixa, para anotar prints de documentação sem ficar escolhendo estilo a
@@ -39,6 +39,10 @@ Clique duas vezes em **`Programa\Alt.exe`**. Nenhuma janela abre: o Alt vai para
 bandeja, com um ícone de callout magenta, e um balão avisa qual atalho ficou
 valendo.
 
+O **Shift esquerdo** é exigido especificamente. `Ctrl + Print Screen` e
+`Ctrl + Shift direito + Print Screen` **não** disparam o Alt — o primeiro fica
+livre para a captura do próprio Windows.
+
 ### O ícone na bandeja
 
 | Ação | O que faz |
@@ -57,7 +61,7 @@ executável.
 
 ## Usar
 
-1. **Ctrl + Print Screen** congela a tela e escurece.
+1. **Ctrl + Shift esquerdo + Print Screen** congela a tela e escurece.
 2. **Arraste** para escolher a área. `Enter` pega a tela inteira, `Esc` cancela.
 3. O editor abre com a área recortada.
 
@@ -132,8 +136,11 @@ da tela; esta é de fundo cheio, para escrever em cima.
 
 ## Como o atalho é ouvido
 
-`Ctrl + Print Screen` é ouvido por **gancho de teclado de baixo nível**
-(`WH_KEYBOARD_LL`), e não pelo `RegisterHotKey` do Windows.
+`Ctrl + Shift esquerdo + Print Screen` é ouvido por **gancho de teclado de baixo
+nível** (`WH_KEYBOARD_LL`), e não pelo `RegisterHotKey` do Windows.
+
+Duas razões. A primeira é que o gancho **distingue o Shift esquerdo do direito** —
+o `RegisterHotKey` só conhece "Shift". A segunda:
 
 A razão é concreta: para o Print Screen, o `RegisterHotKey` **aceita o registro e
 devolve sucesso, mas o evento nunca chega** — programas com gancho de baixo nível
@@ -145,8 +152,8 @@ O gancho também **engole** a combinação, para a captura do Windows não dispa
 junto.
 
 Se o gancho não puder ser instalado, o Alt cai numa reserva pelo mecanismo antigo:
-`Ctrl + Alt + A`, depois `Ctrl + Shift + Print Screen`. O balão da bandeja diz qual
-ficou valendo.
+`Ctrl + Shift + Print Screen`, depois `Ctrl + Alt + A`. A reserva **não** distingue
+o Shift esquerdo do direito. O balão da bandeja diz qual ficou valendo.
 
 Se nada disparar, a causa quase certa é **outra instância do Alt já rodando** — só
 uma pode ter o gancho. Clique direito no ícone da bandeja e *Sair* antes de abrir de
