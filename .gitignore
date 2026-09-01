@@ -1,0 +1,24 @@
+# Saida do PyInstaller. Nao versionar: sao 45 MB em mais de mil arquivos, e o
+# executavel se reconstroi com build.cmd a partir do alt.py.
+/Programa/
+/build/
+/dist/
+*.spec
+
+# Gerados em tempo de execucao
+alt-config.json
+previa-icone.png
+
+# O amostra.png e gerado pelo --autoteste, mas e versionado de proposito:
+# e a imagem de capa do README.
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# Windows
+Thumbs.db
+desktop.ini

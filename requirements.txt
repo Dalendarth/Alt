@@ -1,0 +1,7 @@
+# Para rodar o alt.py direto pelo Python.
+# O tkinter vem com o Python no Windows e nao entra aqui.
+pillow>=10.0
+pywin32>=306
+
+# Somente para gerar o executavel com o build.cmd:
+#   pip install pyinstaller

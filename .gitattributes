@@ -1,0 +1,9 @@
+* text=auto
+
+# O WScript e o cmd precisam de CRLF para funcionar.
+*.vbs text eol=crlf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+
+*.ico binary
+*.png binary
