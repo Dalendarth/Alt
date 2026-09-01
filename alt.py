@@ -284,6 +284,66 @@ def medir_texto_pil(texto, tamanho):
 # ---------------------------------------------------------------------------
 
 
+SUPERAMOSTRAGEM = 4
+
+
+def desenhar_seta_suave(imagem, forma):
+    """Seta com antisserrilhamento, por superamostragem.
+
+    O ImageDraw nao suaviza borda: em diagonal a linha sai em escada. O jeito e
+    desenhar numa camada ampliada e reduzir com reamostragem boa.
+
+    Feito so para a seta, de proposito. O marcador e a etiqueta tem borda quase
+    sempre reta ou curva grande, onde a escada nao aparece, e ampliar tudo
+    custaria memoria a troco de nada.
+    """
+    cor = forma['cor']
+    esp = forma.get('esp', 3)
+    x1, y1 = forma['x1'], forma['y1']
+    x2, y2 = forma['x2'], forma['y2']
+
+    cabeca = cabeca_de_seta(x1, y1, x2, y2, esp)
+    recuo = max(16.0, esp * 5.2) * 0.78
+    ax1, ay1, ax2, ay2 = encurtar(x1, y1, x2, y2, recuo)
+
+    # Caixa que envolve tudo, com folga para a espessura e para a suavizacao.
+    folga = esp * 2 + 6
+    xs = [ax1, ax2, x1, x2] + [c[0] for c in cabeca]
+    ys = [ay1, ay2, y1, y2] + [c[1] for c in cabeca]
+    x0 = int(math.floor(min(xs) - folga))
+    y0 = int(math.floor(min(ys) - folga))
+    x3 = int(math.ceil(max(xs) + folga))
+    y3 = int(math.ceil(max(ys) + folga))
+
+    largura, altura = x3 - x0, y3 - y0
+    if largura < 2 or altura < 2:
+        return False
+    # Teto de seguranca: seta absurda nao vira camada gigante.
+    if largura * altura * SUPERAMOSTRAGEM ** 2 > 120_000_000:
+        return False
+
+    escala = SUPERAMOSTRAGEM
+    camada = Image.new('RGBA', (largura * escala, altura * escala), (0, 0, 0, 0))
+    pincel = ImageDraw.Draw(camada)
+
+    def levar(px, py):
+        return ((px - x0) * escala, (py - y0) * escala)
+
+    largura_da_linha = max(1, int(round(esp * escala)))
+    pincel.line((*levar(ax1, ay1), *levar(ax2, ay2)), fill=cor, width=largura_da_linha)
+
+    # Ponta arredondada no rabo, como o capstyle do editor.
+    raio = largura_da_linha / 2
+    tx, ty = levar(ax1, ay1)
+    pincel.ellipse((tx - raio, ty - raio, tx + raio, ty + raio), fill=cor)
+
+    pincel.polygon([levar(cx, cy) for cx, cy in cabeca], fill=cor)
+
+    reduzida = camada.resize((largura, altura), Image.LANCZOS)
+    imagem.paste(reduzida, (x0, y0), reduzida)
+    return True
+
+
 def desenhar_em_imagem(imagem, formas):
     """Aplica as formas sobre uma copia da imagem e devolve o resultado."""
     saida = imagem.convert('RGB').copy()
@@ -303,6 +363,11 @@ def desenhar_em_imagem(imagem, formas):
             )
 
         elif tipo == 'seta':
+            if desenhar_seta_suave(saida, forma):
+                # A camada suave foi colada direto na imagem; o pincel antigo
+                # ficou apontando para os mesmos pixels, entao segue valido.
+                continue
+            # Reserva, se a caixa for degenerada: traco simples, sem suavizar.
             esp = forma['esp']
             cabeca = cabeca_de_seta(forma['x1'], forma['y1'], forma['x2'], forma['y2'], esp)
             recuo = max(16.0, esp * 5.2) * 0.78

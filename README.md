@@ -197,6 +197,10 @@ Quatro decisões que valem saber ao mexer:
   o fio principal consome.
 - **O desenho final é feito pelo Pillow**, não capturando o canvas. É o que garante
   que o arquivo saia em resolução cheia mesmo quando o editor exibe reduzido.
+- **A seta é desenhada por superamostragem 4×**, numa camada RGBA do tamanho dela, e
+  reduzida com LANCZOS. O `ImageDraw` não suaviza borda, e em diagonal a linha saía
+  em escada. Só a seta faz isso: o marcador e a etiqueta têm borda reta ou curva
+  grande, onde a escada não aparece.
 - **A caixa da etiqueta de texto é medida pelo maior entre a métrica do Pillow e a
   do tkinter.** O Pillow desenha o arquivo e o tkinter desenha o editor; medir só
   por um deles corta o texto no outro.
